@@ -1,0 +1,25 @@
+{
+  "name": "line-hankan-functions",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "func start --typescript",
+    "start:dist": "func start --script-root dist",
+    "start:azurite": "azurite --silent --location .azurite --debug .azurite/debug.log",
+    "deploy": "npm run build && func azure functionapp publish $APP_NAME"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.0.0",
+    "@azure/data-tables": "^13.3.1",
+    "@azure/functions": "^4.6.0",
+    "@azure/storage-blob": "^12.28.0",
+    "@line/bot-sdk": "^7.6.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "azurite": "^3.31.0",
+    "typescript": "^5.6.2"
+  }
+}
