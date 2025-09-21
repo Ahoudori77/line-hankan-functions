@@ -85,26 +85,34 @@ jobs:
             -o json 1>/tmp/deploy.json 2>/tmp/deploy.stderr
           EXIT=$?
 
-          echo "----- deploy.stderr -----"
-          sed -n '1,200p' /tmp/deploy.stderr || true
+          echo "----- deploy.stderr -----"; sed -n '1,200p' /tmp/deploy.stderr || true
+          echo "----- deploy.properties.error -----"; jq -r '.properties.error // "null"' /tmp/deploy.json 2>/dev/null || true
 
-          echo "----- deploy.properties.error -----"
-          jq -r '.properties.error // "null"' /tmp/deploy.json 2>/dev/null || true
-
-          # 後続の「Dump last deployment error」でさらに詳しく出すのでここも落とさない
-          echo "CREATE_RC=$EXIT"
-          exit 0
+          # ここで成功判定。失敗ならジョブを止める
+          STATE=$(jq -r '.properties.provisioningState // ""' /tmp/deploy.json)
+          if [ "$STATE" != "Succeeded" ]; then
+            echo "::error title=ARM deployment failed::$(jq -c '.properties.error // {}' /tmp/deploy.json)"
+            exit 1
+          fi
 
       - name: Capture outputs
         id: out
-        env:
-          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          echo "FUNC=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.funcName.value -o tsv)" >> $GITHUB_OUTPUT
-          echo "SWA=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.swaName.value  -o tsv)" >> $GITHUB_OUTPUT
-          echo "KV=$(az deployment group show  -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.kvName.value   -o tsv)" >> $GITHUB_OUTPUT
-          echo "STG=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.stgName.value  -o tsv)" >> $GITHUB_OUTPUT
-          echo "COSMOS=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.cosmosName.value -o tsv)" >> $GITHUB_OUTPUT
+          OUT=/tmp/deploy.json
+          # 念のため成功確認
+          jq -e '.properties.provisioningState=="Succeeded"' "$OUT" >/dev/null
+
+          # Bicep の outputs をワークフロー出力名にマッピング
+          jq -r '
+            .properties.outputs as $o |
+            [
+              "FUNC=\($o.funcName.value // \"\")",
+              "SWA=\($o.swaName.value // \"\")",
+              "KV=\($o.kvName.value // \"\")",
+              "STG=\($o.stgName.value // \"\")",
+              "COSMOS=\($o.cosmosName.value // \"\")"
+            ] | .[]
+          ' "$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Dump last deployment error
         if: always()
