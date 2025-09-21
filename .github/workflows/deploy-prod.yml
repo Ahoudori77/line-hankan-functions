@@ -16,13 +16,20 @@ env:
   ENV: prod
   LOCATION: japaneast
   PROJECT: frema
-  CLIENT: ${{ vars.CLIENT }} # リポジトリの Variables に設定（例: acme）
+  CLIENT: ${{ vars.CLIENT }}
 
 jobs:
   iac:
     runs-on: ubuntu-latest
+    outputs:
+      FUNC:   ${{ steps.out.outputs.FUNC }}
+      SWA:    ${{ steps.out.outputs.SWA }}
+      KV:     ${{ steps.out.outputs.KV }}
+      STG:    ${{ steps.out.outputs.STG }}
+      COSMOS: ${{ steps.out.outputs.COSMOS }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -30,48 +37,59 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy Bicep (infra/standard/main.bicep)
-        id: iac
-        uses: azure/arm-deploy@v2
-        with:
-          scope: resourcegroup
-          resourceGroupName: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-          template: infra/standard/main.bicep
-          parameters: >-
-            env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }}
+      - name: Ensure Bicep CLI
+        run: az bicep install
 
-      - name: Export outputs
-        id: out
+      - name: Validate Bicep (fail fast)
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          echo "KV=${{ steps.iac.outputs.kvName }}" >> $GITHUB_OUTPUT
-          echo "FUNC=${{ steps.iac.outputs.funcName }}" >> $GITHUB_OUTPUT
-          echo "SWA=${{ steps.iac.outputs.swaName }}" >> $GITHUB_OUTPUT
-          echo "COSMOS=${{ steps.iac.outputs.cosmosName }}" >> $GITHUB_OUTPUT
-          echo "STG=${{ steps.iac.outputs.stgName }}" >> $GITHUB_OUTPUT
+          az deployment group validate \
+            -g "$RG" \
+            --template-file infra/standard/main.bicep \
+            --parameters env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }}
+
+      - name: Deploy Bicep (CLI)
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+        run: |
+          az deployment group create \
+            -g "$RG" \
+            --name iac-${{ github.run_id }} \
+            --template-file infra/standard/main.bicep \
+            --parameters env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }}
+
+      - name: Capture outputs
+        id: out
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+        run: |
+          echo "FUNC=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.funcName.value -o tsv)" >> $GITHUB_OUTPUT
+          echo "SWA=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.swaName.value  -o tsv)" >> $GITHUB_OUTPUT
+          echo "KV=$(az deployment group show  -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.kvName.value   -o tsv)" >> $GITHUB_OUTPUT
+          echo "STG=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.stgName.value  -o tsv)" >> $GITHUB_OUTPUT
+          echo "COSMOS=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.cosmosName.value -o tsv)" >> $GITHUB_OUTPUT
 
       - name: Inject connection secrets to Key Vault
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          KV: ${{ steps.out.outputs.KV }}
+          COSMOS: ${{ steps.out.outputs.COSMOS }}
+          STG: ${{ steps.out.outputs.STG }}
         run: |
-          RG=rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-          KV=${{ steps.out.outputs.KV }}
-          COSMOS=${{ steps.out.outputs.COSMOS }}
-          STG=${{ steps.out.outputs.STG }}
-
-          # Cosmos endpoint/key → KV
           COSMOS_EP="https://${COSMOS}.documents.azure.com:443/"
           COSMOS_KEY=$(az cosmosdb keys list -n "$COSMOS" -g "$RG" --type keys --query primaryMasterKey -o tsv)
           az keyvault secret set --vault-name "$KV" -n COSMOS_ENDPOINT --value "$COSMOS_EP"
           az keyvault secret set --vault-name "$KV" -n COSMOS_PRIMARY_KEY --value "$COSMOS_KEY"
-
-          # Storage connection → KV（AzureWebJobsStorage 用）
           CONN=$(az storage account show-connection-string -n "$STG" -g "$RG" -o tsv)
           az keyvault secret set --vault-name "$KV" -n AZURE_WEBJOBS_STORAGE --value "$CONN"
 
       - name: Point Function App settings to Key Vault references
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          KV: ${{ steps.out.outputs.KV }}
+          FUNC: ${{ steps.out.outputs.FUNC }}
         run: |
-          RG=rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-          KV=${{ steps.out.outputs.KV }}
-          FUNC=${{ steps.out.outputs.FUNC }}
-
           az functionapp config appsettings set -g "$RG" -n "$FUNC" --settings \
             AzureWebJobsStorage=@Microsoft.KeyVault\(SecretUri=https://$KV.vault.azure.net/secrets/AZURE_WEBJOBS_STORAGE\) \
             COSMOS_ENDPOINT=@Microsoft.KeyVault\(SecretUri=https://$KV.vault.azure.net/secrets/COSMOS_ENDPOINT\) \
@@ -80,10 +98,12 @@ jobs:
   app-func:
     needs: iac
     runs-on: ubuntu-latest
+    if: ${{ hashFiles('apps/functions/**') != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with:
+          node-version: '20'
 
       - name: Build Functions
         run: |
@@ -101,26 +121,28 @@ jobs:
       - name: Deploy to staging slot
         uses: azure/functions-action@v1
         with:
-          app-name: ${{ needs.iac.outputs.funcName || steps.get.outputs.FUNC }}
+          app-name: ${{ needs.iac.outputs.FUNC }}
           slot-name: staging
           package: apps/functions
 
       - name: Health check (staging)
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          FUNC: ${{ needs.iac.outputs.FUNC }}
         run: |
-          RG=rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-          FUNC=${{ steps.get.outputs.FUNC || needs.iac.outputs.funcName }}
           KEY=$(az functionapp keys list -g "$RG" -n "$FUNC" --slot staging --query functionKeys.default -o tsv)
           curl -fsS "https://$FUNC-staging.azurewebsites.net/api/admin-health?code=$KEY"
 
       - name: Slot swap → production
-        run: |
-          RG=rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-          FUNC=${{ steps.get.outputs.FUNC || needs.iac.outputs.funcName }}
-          az webapp deployment slot swap -g "$RG" -n "$FUNC" --slot staging
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          FUNC: ${{ needs.iac.outputs.FUNC }}
+        run: az webapp deployment slot swap -g "$RG" -n "$FUNC" --slot staging
 
   app-swa:
     needs: iac
     runs-on: ubuntu-latest
+    if: ${{ hashFiles('apps/liff/**') != '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Build LIFF app
@@ -130,6 +152,7 @@ jobs:
           npm run build
 
       - name: Deploy SWA
+        continue-on-error: true
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_SWA_TOKEN }}
