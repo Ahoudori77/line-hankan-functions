@@ -54,37 +54,36 @@ jobs:
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
+          set +e
           az deployment group validate \
-            -g "$RG" \
-            -f /tmp/iac.json \
+            -g "$RG" -f /tmp/iac.json \
             -p env='${{ env.ENV }}' client='${{ env.CLIENT }}' location='${{ env.LOCATION }}' project='${{ env.PROJECT }}' \
-               enableMonitoring=false deploySwa=false \
-            --query error -o jsonc
+              enableMonitoring=false deploySwa=false \
+            -o json > /tmp/validate.json
+          CODE=$?
+          echo "----- validate.error -----"
+          jq -r '.error // "no error"' /tmp/validate.json
+          # エラーがあれば失敗させる
+          test "$(jq '.error' /tmp/validate.json)" = "null"
 
       - name: Deploy Bicep (CLI)
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          set -eo pipefail
-          echo "== sending template head =="; head -n 60 /tmp/iac.json || true
-
-          # create の戻りを握りつぶさず、エラー本文だけを JSON で取り出して表示
+          set +e
           az deployment group create \
-            -g "$RG" \
-            -n iac-${{ github.run_id }} \
+            -g "$RG" -n iac-${{ github.run_id }} \
             -f /tmp/iac.json \
             -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} \
-               enableMonitoring=false deploySwa=false \
-            --no-prompt \
-            --query "{state:properties.provisioningState, error:properties.error}" -o jsonc \
-          || EXIT=$?
-
-          echo "== properties.error =="; az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.error -o jsonc || true
-          echo "== operations =="; az deployment operation group list -g "$RG" -n iac-${{ github.run_id }} \
-            --query "[].{op:properties.provisioningOperation,state:properties.provisioningState,code:properties.statusCode,msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}" \
-            -o table || true
-
-          exit ${EXIT:-0}
+              enableMonitoring=false deploySwa=false \
+            -o json > /tmp/deploy.json
+          EXIT=$?
+          echo "----- create.properties.error -----"
+          jq -r '.properties.error // "no error"' /tmp/deploy.json
+          echo "----- operations (last 50) -----"
+          az deployment operation group list -g "$RG" -n iac-${{ github.run_id }} \
+            --query '[-50:].[].{op:properties.provisioningOperation,state:properties.provisioningState,code:properties.statusCode,msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}' -o table || true
+          exit $EXIT
 
       - name: Capture outputs
         id: out
