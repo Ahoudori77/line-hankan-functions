@@ -45,31 +45,39 @@ jobs:
           az bicep build --file infra/standard/main.bicep --outdir /tmp
           mv /tmp/main.json /tmp/iac.json
 
+      - name: Validate template (preflight)
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+        run: |
+          az deployment group validate \
+            -g "$RG" \
+            -f /tmp/iac.json \
+            -p env='${{ env.ENV }}' client='${{ env.CLIENT }}' location='${{ env.LOCATION }}' project='${{ env.PROJECT }}' \
+               enableMonitoring=false deploySwa=false \
+            --query error -o jsonc
+
       - name: Deploy Bicep (CLI)
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
           set -eo pipefail
-          echo "== sending template head =="
-          head -n 60 /tmp/iac.json || true
+          echo "== sending template head =="; head -n 60 /tmp/iac.json || true
 
-          EXIT=0
           az deployment group create \
             -g "$RG" \
             -n iac-${{ github.run_id }} \
             -f /tmp/iac.json \
-            -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false deploySwa=false
+            -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} \
+               enableMonitoring=false deploySwa=false \
+            --only-show-errors -o none \
           || EXIT=$?
 
-          echo "== properties.error =="
-          az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.error -o jsonc || true
-
-          echo "== operations =="
-          az deployment operation group list -g "$RG" -n iac-${{ github.run_id }} \
+          echo "== properties.error =="; az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.error -o jsonc || true
+          echo "== operations =="; az deployment operation group list -g "$RG" -n iac-${{ github.run_id }} \
             --query "[].{op:properties.provisioningOperation,state:properties.provisioningState,code:properties.statusCode,msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}" \
             -o table || true
 
-          exit $EXIT
+          exit ${EXIT:-0}
 
       - name: Capture outputs
         id: out
