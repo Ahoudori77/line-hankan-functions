@@ -41,38 +41,33 @@ jobs:
         run: az bicep install
 
       - name: Compile Bicep (syntax check)
-        run: az bicep build --file infra/standard/main.bicep --outfile /tmp/iac.json
+        run: az bicep build --file infra/standard/main.bicep --stdout > /tmp/iac.json
 
       - name: Deploy Bicep (CLI)
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
           set -eo pipefail
-          # 何を投げているか確認（任意）
+          echo "== sending template head =="
           head -n 60 /tmp/iac.json || true
 
-          # デプロイを実行。結果をファイルに保存しておく
+          EXIT=0
           az deployment group create \
             -g "$RG" \
             -n iac-${{ github.run_id }} \
             -f /tmp/iac.json \
             -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false \
-            -o json > /tmp/deploy.json || true
+          || EXIT=$?
 
-          echo "== Provisioning state =="
-          jq -r '.properties.provisioningState // "-"' /tmp/deploy.json
+          echo "== properties.error =="
+          az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.error -o jsonc || true
 
-          echo "== Top-level error (if any) =="
-          jq '.properties.error // empty' /tmp/deploy.json
+          echo "== operations =="
+          az deployment operation group list -g "$RG" -n iac-${{ github.run_id }} \
+            --query "[].{op:properties.provisioningOperation,state:properties.provisioningState,code:properties.statusCode,msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}" \
+            -o table || true
 
-          # 失敗していたらオペレーションの詳細を列挙（ここに本当のエラーが出ます）
-          if [ "$(jq -r '.properties.provisioningState' /tmp/deploy.json)" = "Failed" ] || [ ! -s /tmp/deploy.json ]; then
-            az deployment operation group list \
-              -g "$RG" -n iac-${{ github.run_id }} \
-              --query "[].{op:properties.provisioningOperation, state:properties.provisioningState, code:properties.statusCode, msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}" \
-              -o table || true
-            exit 1
-          fi
+          exit $EXIT
 
       - name: Capture outputs
         id: out
