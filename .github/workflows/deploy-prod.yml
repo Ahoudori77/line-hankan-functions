@@ -58,7 +58,7 @@ jobs:
             -g "$RG" \
             -n iac-${{ github.run_id }} \
             -f /tmp/iac.json \
-            -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false \
+            -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false deploySwa=false
           || EXIT=$?
 
           echo "== properties.error =="
