@@ -76,22 +76,21 @@ jobs:
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          set +e
-          # 応答(JSON)は捨てて stderr だけ保存（CLI のバグを回避）
+          set -euo pipefail
           az deployment group create \
             -g "$RG" -n iac-${{ github.run_id }} \
             -f /tmp/iac.json \
-            -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} \
-              enableMonitoring=false deploySwa=false \
-            -o none 1>/dev/null 2>/tmp/deploy.stderr
-          CREATE_RC=$?
+            -p env='${{ env.ENV }}' client='${{ env.CLIENT }}' location='${{ env.LOCATION }}' project='${{ env.PROJECT }}' \
+               enableMonitoring=false deploySwa=false \
+            -o json > /tmp/deploy.json
 
-          echo "----- deploy.stderr (first 200 lines) -----"
-          sed -n '1,200p' /tmp/deploy.stderr || true
-
-          # ここでは失敗させない（後段で status / operations を取得して判断）
-          echo "CREATE_RC=$CREATE_RC"
-          exit 0
+          echo "STATE=$(jq -r '.properties.provisioningState' /tmp/deploy.json)"
+          # エラーが入っていれば中断して表示
+          if jq -e '.properties.error' /tmp/deploy.json >/dev/null; then
+            echo "----- deployment.error -----"
+            jq -r '.properties.error' /tmp/deploy.json
+            exit 1
+          fi
 
 
       - name: Fetch deployment status & operations
@@ -183,6 +182,14 @@ jobs:
           CONN=$(az storage account show-connection-string -n "$STG" -g "$RG" -o tsv)
           az keyvault secret set --vault-name "$KV" -n AZURE_WEBJOBS_STORAGE --value "$CONN"
 
+
+      - name: Show Azure context
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+        run: |
+          az account show --query "{subscription:id, name:name, tenant:tenantId}" -o table
+          az group show -n "$RG" -o table || true
+
       - name: Point Function App settings to Key Vault references
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
@@ -212,6 +219,21 @@ jobs:
             /tmp/validate.stderr
             /tmp/deploy.json
             /tmp/deploy.stderr
+
+
+      - name: Ensure resource group
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          LOCATION: ${{ env.LOCATION }}
+        run: |
+          set -e
+          if ! az group show -n "$RG" >/dev/null 2>&1; then
+            echo "RG '$RG' not found. Creating..."
+            az group create -n "$RG" -l "$LOCATION" >/dev/null
+          else
+            echo "RG '$RG' exists."
+          fi
+
 
   app-func:
     needs: iac
