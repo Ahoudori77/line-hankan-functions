@@ -41,7 +41,7 @@ jobs:
         run: az bicep install
 
       - name: Compile Bicep (syntax check)
-        run: az bicep build -f infra/standard/main.bicep -o /tmp/iac.json
+        run: az bicep build --file infra/standard/main.bicep --outfile /tmp/iac.json
 
       - name: Deploy Bicep (CLI)
         env:
