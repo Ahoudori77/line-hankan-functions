@@ -47,14 +47,32 @@ jobs:
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          # 何を投げているか一応確認
-          head -n 40 /tmp/iac.json || true
+          set -eo pipefail
+          # 何を投げているか確認（任意）
+          head -n 60 /tmp/iac.json || true
+
+          # デプロイを実行。結果をファイルに保存しておく
           az deployment group create \
             -g "$RG" \
-            --name iac-${{ github.run_id }} \
-            --template-file /tmp/iac.json \
-            --parameters env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false \
-            --only-show-errors
+            -n iac-${{ github.run_id }} \
+            -f /tmp/iac.json \
+            -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false \
+            -o json > /tmp/deploy.json || true
+
+          echo "== Provisioning state =="
+          jq -r '.properties.provisioningState // "-"' /tmp/deploy.json
+
+          echo "== Top-level error (if any) =="
+          jq '.properties.error // empty' /tmp/deploy.json
+
+          # 失敗していたらオペレーションの詳細を列挙（ここに本当のエラーが出ます）
+          if [ "$(jq -r '.properties.provisioningState' /tmp/deploy.json)" = "Failed" ] || [ ! -s /tmp/deploy.json ]; then
+            az deployment operation group list \
+              -g "$RG" -n iac-${{ github.run_id }} \
+              --query "[].{op:properties.provisioningOperation, state:properties.provisioningState, code:properties.statusCode, msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}" \
+              -o table || true
+            exit 1
+          fi
 
       - name: Capture outputs
         id: out
@@ -74,6 +92,9 @@ jobs:
         run: |
           DEPLOY=iac-${{ github.run_id }}
           az deployment group show -g "$RG" -n "$DEPLOY" --query properties.error -o jsonc || true
+          az deployment operation group list -g "$RG" -n "$DEPLOY" \
+            --query "[].{op:properties.provisioningOperation, state:properties.provisioningState, code:properties.statusCode, msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}" \
+            -o table || true
 
       - name: Inject connection secrets to Key Vault
         env:
