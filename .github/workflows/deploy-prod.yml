@@ -50,6 +50,14 @@ jobs:
           az bicep build --file infra/standard/main.bicep --outdir /tmp
           mv /tmp/main.json /tmp/iac.json
 
+      - name: Ensure resource group
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          LOCATION: ${{ env.LOCATION }}
+        run: |
+          # あってもOK、無ければ作成（idempotent）
+          az group create -n "$RG" -l "$LOCATION" >/dev/null
+
       - name: Validate template (preflight)
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
@@ -76,21 +84,21 @@ jobs:
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          set -euo pipefail
+          set +e
           az deployment group create \
             -g "$RG" -n iac-${{ github.run_id }} \
             -f /tmp/iac.json \
             -p env='${{ env.ENV }}' client='${{ env.CLIENT }}' location='${{ env.LOCATION }}' project='${{ env.PROJECT }}' \
                enableMonitoring=false deploySwa=false \
-            -o json > /tmp/deploy.json
+            -o none 1>/dev/null 2>/tmp/deploy.stderr
+          CREATE_RC=$?
 
-          echo "STATE=$(jq -r '.properties.provisioningState' /tmp/deploy.json)"
-          # エラーが入っていれば中断して表示
-          if jq -e '.properties.error' /tmp/deploy.json >/dev/null; then
-            echo "----- deployment.error -----"
-            jq -r '.properties.error' /tmp/deploy.json
-            exit 1
-          fi
+          echo "----- deploy.stderr (first 200) -----"
+          sed -n '1,200p' /tmp/deploy.stderr || true
+
+          # ここでは落とさない。次のステップで show/operations を見にいく
+          echo "CREATE_RC=$CREATE_RC"
+          exit 0
 
 
       - name: Fetch deployment status & operations
