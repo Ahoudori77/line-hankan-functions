@@ -100,15 +100,14 @@ jobs:
           resourceGroupName: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
           template: infra/standard/main.bicep
           parameters: |
-            {
-              "env":              {"value": "${{ env.ENV }}"},
-              "client":           {"value": "${{ env.CLIENT }}"},
-              "location":         {"value": "${{ env.LOCATION }}"},
-              "project":          {"value": "${{ env.PROJECT }}"},
-              "enableMonitoring": {"value": false},
-              "deploySwa":        {"value": false}
-            }
+            env=${{ env.ENV }}
+            client=${{ env.CLIENT }}
+            location=${{ env.LOCATION }}
+            project=${{ env.PROJECT }}
+            enableMonitoring=false
+            deploySwa=false
           deploymentName: iac-${{ github.run_id }}
+
       - name: Capture outputs
         id: out
         run: |
