@@ -84,7 +84,8 @@ jobs:
         id: deploy
         uses: azure/arm-deploy@v2
         with:
-          scopeLevel: ResourceGroup
+          scope: resourcegroup
+          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           region: ${{ env.LOCATION }}
           resourceGroupName: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
           template: infra/standard/main.bicep
