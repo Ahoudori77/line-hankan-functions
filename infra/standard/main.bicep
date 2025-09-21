@@ -1,6 +1,30 @@
-// CLEAN v1.1 — 余計なMarkdown記号（``` など）を含めず、この内容をそのまま保存してください
+// CLEAN v1.2 (ASCII only)
+resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
+name: cosmosName
+location: location
+kind: 'GlobalDocumentDB'
+properties: {
+databaseAccountOfferType: 'Standard'
+locations: [
+{
+locationName: location
+failoverPriority: 0
+isZoneRedundant: false
+}
+]
+publicNetworkAccess: 'Enabled'
+minimalTlsVersion: 'Tls12'
+}
 }
 
+
+resource sqlDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' = {
+name: '${cosmos.name}/frema'
+properties: {
+resource: { id: 'frema' }
+options: { throughput: 0 }
+}
+}
 
 resource cUsers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
 name: '${cosmos.name}/frema/Users'
@@ -53,7 +77,6 @@ options: { autoscaleSettings: { maxThroughput: 2000 } }
 }
 
 
-// ---- Outputs ----
 output kvName string = kv.name
 output stgName string = stg.name
 output funcName string = func.name
