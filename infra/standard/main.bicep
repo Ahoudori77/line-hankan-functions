@@ -109,6 +109,7 @@ resource func 'Microsoft.Web/sites@2023-12-01' = {
 resource slot 'Microsoft.Web/sites/slots@2023-12-01' = {
   name: 'staging'
   parent: func
+  location: location 
   properties: {
     siteConfig: {
       linuxFxVersion: 'Node|20'
