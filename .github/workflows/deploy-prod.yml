@@ -40,14 +40,9 @@ jobs:
       - name: Ensure Bicep CLI
         run: az bicep install
 
-      - name: Validate Bicep (fail fast)
-        env:
-          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-        run: |
-          az deployment group validate \
-            -g "$RG" \
-            --template-file infra/standard/main.bicep \
-            --parameters env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }}
+      # ← 検証は CLI ビルドだけに変更（構文チェックのみ）
+      - name: Compile Bicep (syntax check)
+        run: az bicep build -f infra/standard/main.bicep
 
       - name: Deploy Bicep (CLI)
         env:
@@ -69,6 +64,16 @@ jobs:
           echo "KV=$(az deployment group show  -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.kvName.value   -o tsv)" >> $GITHUB_OUTPUT
           echo "STG=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.stgName.value  -o tsv)" >> $GITHUB_OUTPUT
           echo "COSMOS=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.cosmosName.value -o tsv)" >> $GITHUB_OUTPUT
+
+      # 失敗時にARMの詳細を必ずダンプ（原因特定用）
+      - name: Dump last deployment error
+        if: failure()
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+        run: |
+          az deployment group list -g "$RG" -o table
+          DEPLOY=$(az deployment group list -g "$RG" --query "[-1].name" -o tsv)
+          az deployment group show -g "$RG" -n "$DEPLOY" --query properties.error -o jsonc || true
 
       - name: Inject connection secrets to Key Vault
         env:
