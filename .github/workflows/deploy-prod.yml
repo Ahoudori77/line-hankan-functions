@@ -40,19 +40,21 @@ jobs:
       - name: Ensure Bicep CLI
         run: az bicep install
 
-      # ← 検証は CLI ビルドだけに変更（構文チェックのみ）
       - name: Compile Bicep (syntax check)
-        run: az bicep build -f infra/standard/main.bicep
+        run: az bicep build -f infra/standard/main.bicep -o /tmp/iac.json
 
       - name: Deploy Bicep (CLI)
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
+          # 何を投げているか一応確認
+          head -n 40 /tmp/iac.json || true
           az deployment group create \
             -g "$RG" \
             --name iac-${{ github.run_id }} \
-            --template-file infra/standard/main.bicep \
-            --parameters env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }}
+            --template-file /tmp/iac.json \
+            --parameters env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false \
+            --only-show-errors
 
       - name: Capture outputs
         id: out
@@ -65,14 +67,12 @@ jobs:
           echo "STG=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.stgName.value  -o tsv)" >> $GITHUB_OUTPUT
           echo "COSMOS=$(az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.outputs.cosmosName.value -o tsv)" >> $GITHUB_OUTPUT
 
-      # 失敗時にARMの詳細を必ずダンプ（原因特定用）
       - name: Dump last deployment error
-        if: failure()
+        if: always()
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          az deployment group list -g "$RG" -o table
-          DEPLOY=$(az deployment group list -g "$RG" --query "[-1].name" -o tsv)
+          DEPLOY=iac-${{ github.run_id }}
           az deployment group show -g "$RG" -n "$DEPLOY" --query properties.error -o jsonc || true
 
       - name: Inject connection secrets to Key Vault
@@ -106,7 +106,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ① ディレクトリ存在チェック（出力: exists=true/false）
       - name: Check functions dir
         id: chk
         run: |
@@ -116,7 +115,6 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      # ② 以下、存在する場合のみ実行
       - uses: actions/setup-node@v4
         if: ${{ steps.chk.outputs.exists == 'true' }}
         with:
@@ -167,7 +165,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ① ディレクトリ存在チェック
       - name: Check liff dir
         id: chk
         run: |
@@ -186,7 +183,7 @@ jobs:
 
       - name: Deploy SWA
         if: ${{ steps.chk.outputs.exists == 'true' }}
-        continue-on-error: true   # SWAトークン未設定でも全体は落とさない
+        continue-on-error: true
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_SWA_TOKEN }}
