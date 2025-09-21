@@ -80,86 +80,36 @@ jobs:
           echo "VALID_RC=$VALID_RC"
           exit 0
 
-      - name: Deploy Bicep (CLI)
-        env:
-          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-        run: |
-          set -euo pipefail
-
-          # パラメータをファイルで渡す（Bicep の param 名と合わせる）
-          cat > /tmp/params.json <<'JSON'
-          {
-            "env":              { "value": "${{ env.ENV }}" },
-            "client":           { "value": "${{ env.CLIENT }}" },
-            "location":         { "value": "${{ env.LOCATION }}" },
-            "project":          { "value": "${{ env.PROJECT }}" },
-            "enableMonitoring": { "value": false },
-            "deploySwa":        { "value": false }
-          }
-          JSON
-
-          DEPLOY=iac-${{ github.run_id }}
-
-          # 出力はそのまま JSON に落とす（--query は使わない）
-          az deployment group create \
-            -g "$RG" -n "$DEPLOY" \
-            -f /tmp/iac.json \
-            -p @/tmp/params.json \
-            -o json > /tmp/deploy.json
-
-          # エラーが入っていたら明示的に失敗させる
-          if jq -e '.properties.error' /tmp/deploy.json >/dev/null; then
-            echo "----- deployment.error -----"
-            jq -r '.properties.error' /tmp/deploy.json
-            exit 1
-          fi
-
-          echo "STATE=$(jq -r '.properties.provisioningState' /tmp/deploy.json)"
-
-
-      - name: Fetch deployment status & operations
-        if: always()
-        env:
-          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-        run: |
-          DEPLOY=iac-${{ github.run_id }}
-
-          # デプロイ オブジェクトを取得
-          az deployment group show -g "$RG" -n "$DEPLOY" -o json > /tmp/deploy.json || true
-          echo "----- deployment.state -----"
-          jq -r '.properties.provisioningState // "unknown"' /tmp/deploy.json || true
-          echo "----- deployment.error -----"
-          jq -cr '.properties.error // "null"' /tmp/deploy.json || true
-
-          # 失敗したオペレーションだけ抽出（どのリソースで何が落ちたかが分かる）
-          echo "----- failed operations (table) -----"
-          az deployment operation group list -g "$RG" -n "$DEPLOY" \
-            --query "[?properties.provisioningState=='Failed'].{type:properties.targetResource.resourceType,name:properties.targetResource.resourceName,code:properties.statusCode,err:coalesce(properties.statusMessage.error.message, properties.statusMessage.message)}" \
-            -o table || true
-
-          # 失敗なら明示的に exit 1（この後の KV 注入などはスキップされる）
-          STATE=$(jq -r '.properties.provisioningState // ""' /tmp/deploy.json 2>/dev/null || echo "")
-          if [ "$STATE" != "Succeeded" ]; then
-            echo "::error title=ARM deployment failed::See 'failed operations' table above."
-            exit 1
-          fi
-
+      - name: Deploy Bicep (ARM action)
+        id: deploy
+        uses: azure/arm-deploy@v2
+        with:
+          scopeLevel: ResourceGroup
+          region: ${{ env.LOCATION }}
+          resourceGroupName: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          template: infra/standard/main.bicep
+          parameters: |
+            env=${{ env.ENV }}
+            client=${{ env.CLIENT }}
+            location=${{ env.LOCATION }}
+            project=${{ env.PROJECT }}
+            enableMonitoring=false
+            deploySwa=false
+          deploymentName: iac-${{ github.run_id }}
 
       - name: Capture outputs
         id: out
         run: |
-          OUT=/tmp/deploy.json
-          jq -e '.properties.provisioningState=="Succeeded"' "$OUT" >/dev/null
+          echo '${{ steps.deploy.outputs.deploymentOutputs }}' > /tmp/arm-outputs.json
           jq -r '
-            .properties.outputs as $o |
             [
-              "FUNC=\($o.funcName.value // \"\")",
-              "SWA=\($o.swaName.value // \"\")",
-              "KV=\($o.kvName.value // \"\")",
-              "STG=\($o.stgName.value // \"\")",
-              "COSMOS=\($o.cosmosName.value // \"\")"
+              "FUNC=\(.funcName.value // \"\")",
+              "SWA=\(.swaName.value // \"\")",
+              "KV=\(.kvName.value // \"\")",
+              "STG=\(.stgName.value // \"\")",
+              "COSMOS=\(.cosmosName.value // \"\")"
             ] | .[]
-          ' "$OUT" >> "$GITHUB_OUTPUT"
+          ' /tmp/arm-outputs.json >> "$GITHUB_OUTPUT"
 
       - name: Dump last deployment error
         if: always()
