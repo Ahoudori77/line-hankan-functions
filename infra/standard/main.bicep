@@ -6,6 +6,7 @@ param location string = 'japaneast'
 param project string = 'frema'
 param swaLocation string = 'eastasia' // SWA は対応リージョンを使う
 param enableMonitoring bool = false
+param deploySwa bool = false
 
 // ---- Names ----
 var nameBase = '${project}-${client}-${env}'
@@ -121,7 +122,7 @@ resource slot 'Microsoft.Web/sites/slots@2023-12-01' = {
 }
 
 // ---- Static Web Apps ----
-resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
+resource swa 'Microsoft.Web/staticSites@2023-12-01' = if (deploySwa) {
   name: swaName
   location: swaLocation
   sku: {
@@ -130,6 +131,8 @@ resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
   }
   properties: {}
 }
+
+output swaName string = deploySwa ? swa.name : ''
 
 // ---- Cosmos DB (account -> db -> containers) ----
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
