@@ -119,15 +119,35 @@ jobs:
 
       - name: Inject connection secrets to Key Vault
         env:
-          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+          SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RG:  rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
           KV: ${{ steps.out.outputs.KV }}
           COSMOS: ${{ steps.out.outputs.COSMOS }}
           STG: ${{ steps.out.outputs.STG }}
         run: |
+          set -euo pipefail
+
+          # 値の存在チェック（空なら原因がすぐ分かるように fail）
+          for v in KV COSMOS STG; do
+            val="${!v:-}"
+            if [ -z "$val" ]; then
+              echo "::error title=${v} is empty::${v} output is empty. Check the 'Capture outputs' step."
+              exit 1
+            fi
+          done
+
           COSMOS_EP="https://${COSMOS}.documents.azure.com:443/"
-          COSMOS_KEY=$(az cosmosdb keys list -n "$COSMOS" -g "$RG" --type keys --query primaryMasterKey -o tsv)
-          az keyvault secret set --vault-name "$KV" -n COSMOS_ENDPOINT --value "$COSMOS_EP"
-          az keyvault secret set --vault-name "$KV" -n COSMOS_PRIMARY_KEY --value "$COSMOS_KEY"
+          # 管理プレーンに直接 POST（listKeys）
+          COSMOS_KEY=$(az rest \
+            --method post \
+            --url "https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.DocumentDB/databaseAccounts/${COSMOS}/listKeys?api-version=2024-05-15" \
+            --query primaryMasterKey -o tsv)
+
+          # KV へ投入
+          az keyvault secret set --vault-name "$KV" -n COSMOS_ENDPOINT      --value "$COSMOS_EP"
+          az keyvault secret set --vault-name "$KV" -n COSMOS_PRIMARY_KEY   --value "$COSMOS_KEY"
+
+          # Storage の接続文字列
           CONN=$(az storage account show-connection-string -n "$STG" -g "$RG" -o tsv)
           az keyvault secret set --vault-name "$KV" -n AZURE_WEBJOBS_STORAGE --value "$CONN"
 
