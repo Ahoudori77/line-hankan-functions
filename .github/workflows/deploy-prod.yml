@@ -84,21 +84,37 @@ jobs:
         env:
           RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
         run: |
-          set +e
+          set -euo pipefail
+
+          # パラメータをファイルで渡す（Bicep の param 名と合わせる）
+          cat > /tmp/params.json <<'JSON'
+          {
+            "env":              { "value": "${{ env.ENV }}" },
+            "client":           { "value": "${{ env.CLIENT }}" },
+            "location":         { "value": "${{ env.LOCATION }}" },
+            "project":          { "value": "${{ env.PROJECT }}" },
+            "enableMonitoring": { "value": false },
+            "deploySwa":        { "value": false }
+          }
+          JSON
+
+          DEPLOY=iac-${{ github.run_id }}
+
+          # 出力はそのまま JSON に落とす（--query は使わない）
           az deployment group create \
-            -g "$RG" -n iac-${{ github.run_id }} \
+            -g "$RG" -n "$DEPLOY" \
             -f /tmp/iac.json \
-            -p env='${{ env.ENV }}' client='${{ env.CLIENT }}' location='${{ env.LOCATION }}' project='${{ env.PROJECT }}' \
-               enableMonitoring=false deploySwa=false \
-            -o none 1>/dev/null 2>/tmp/deploy.stderr
-          CREATE_RC=$?
+            -p @/tmp/params.json \
+            -o json > /tmp/deploy.json
 
-          echo "----- deploy.stderr (first 200) -----"
-          sed -n '1,200p' /tmp/deploy.stderr || true
+          # エラーが入っていたら明示的に失敗させる
+          if jq -e '.properties.error' /tmp/deploy.json >/dev/null; then
+            echo "----- deployment.error -----"
+            jq -r '.properties.error' /tmp/deploy.json
+            exit 1
+          fi
 
-          # ここでは落とさない。次のステップで show/operations を見にいく
-          echo "CREATE_RC=$CREATE_RC"
-          exit 0
+          echo "STATE=$(jq -r '.properties.provisioningState' /tmp/deploy.json)"
 
 
       - name: Fetch deployment status & operations
