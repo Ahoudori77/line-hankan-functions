@@ -90,17 +90,33 @@ jobs:
           done
           echo "::notice::ENV=$ENV CLIENT=$CLIENT LOCATION=$LOCATION PROJECT=$PROJECT"
 
-      - name: Deploy Bicep (ARM action)
-        id: deploy
-        uses: azure/arm-deploy@v2
-        with:
-          scope: resourcegroup
-          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          region: ${{ env.LOCATION }}
-          resourceGroupName: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
-          template: infra/standard/main.bicep
-          parameters: env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} enableMonitoring=false deploySwa=false
-          deploymentName: iac-${{ github.run_id }}
+      - name: Write params (safe)
+        run: |
+          cat > /tmp/params.json <<'JSON'
+          {
+            "env":              { "value": "${{ env.ENV }}" },
+            "client":           { "value": "${{ env.CLIENT }}" },
+            "location":         { "value": "${{ env.LOCATION }}" },
+            "project":          { "value": "${{ env.PROJECT }}" },
+            "enableMonitoring": { "value": false },
+            "deploySwa":        { "value": false }
+          }
+          JSON
+
+      - name: Deploy Bicep (CLI, show real error)
+        env:
+          RG: rg-${{ env.PROJECT }}-${{ env.CLIENT }}-${{ env.ENV }}-app
+        run: |
+          set -euo pipefail
+          DEPLOY=iac-${{ github.run_id }}
+          az deployment group create \
+            -g "$RG" -n "$DEPLOY" \
+            -f infra/standard/main.bicep \
+            -p @/tmp/params.json \
+            -o json > /tmp/deploy.json
+
+          # 失敗時にここまで来ないので、そのまま次の「Dump last deployment error」で詳細が見える
+          echo "STATE=$(jq -r '.properties.provisioningState' /tmp/deploy.json)"
 
 
       - name: Capture outputs
