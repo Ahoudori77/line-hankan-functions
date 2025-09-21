@@ -213,5 +213,5 @@ output kvName string = kv.name
 output stgName string = stg.name
 output funcName string = func.name
 output funcPrincipalId string = func.identity.principalId
-output swaName string = swa.name
+output swaName string = deploySwa ? swa.name : ''
 output cosmosName string = cosmos.name
