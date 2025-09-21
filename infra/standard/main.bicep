@@ -5,21 +5,21 @@ param client string
 param location string = 'japaneast'
 param project string = 'frema'
 param swaLocation string = 'eastasia' // SWA は対応リージョンを使う
-param enableMonitoring bool = true
+param enableMonitoring bool = false
 
 // ---- Names ----
-var nameBase   = '${project}-${client}-${env}'
-var funcName   = 'func-${nameBase}'
-var swaName    = 'swa-${nameBase}'
-var kvName     = 'kv-${nameBase}'
-var cosmosAccountName = toLower('cosmos-${project}-${client}-${env}')
-var laName     = 'log-${nameBase}'
-var aiName     = 'appi-${nameBase}'
-var stgName    = toLower('st${project}${client}${env}${uniqueString(resourceGroup().id)}')
+var nameBase = '${project}-${client}-${env}'
+var suffix   = toLower(uniqueString(resourceGroup().id))
+
+var funcName = 'func-${nameBase}-${suffix}'
+var swaName  = 'swa-${nameBase}-${suffix}'
+var kvName   = 'kv-${nameBase}-${suffix}'
+var cosmosAccountName = toLower('cos${project}${client}${env}${suffix}')
+var stgName  = toLower('st${project}${client}${env}${uniqueString(resourceGroup().id)}')
 
 // ---- Log Analytics / App Insights ----
 resource la 'Microsoft.OperationalInsights/workspaces@2022-10-01' = if (enableMonitoring) {
-  name: laName
+  name: 'log-${nameBase}-${suffix}'
   location: location
   properties: {
     retentionInDays: 30
@@ -29,7 +29,7 @@ resource la 'Microsoft.OperationalInsights/workspaces@2022-10-01' = if (enableMo
 }
 
 resource ai 'Microsoft.Insights/components@2022-06-15' = if (enableMonitoring) {
-  name: aiName
+  name: 'appi-${nameBase}-${suffix}'
   location: location
   kind: 'web'
   properties: {
@@ -47,7 +47,6 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
     tenantId: subscription().tenantId
     sku: { name: 'standard', family: 'A' }
     enableRbacAuthorization: true
-    enableSoftDelete: true
     softDeleteRetentionInDays: 90
     publicNetworkAccess: 'Enabled'
   }
@@ -122,7 +121,10 @@ resource slot 'Microsoft.Web/sites/slots@2023-12-01' = {
 resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
   name: swaName
   location: swaLocation
-  sku: { name: 'Standard' }
+  sku: {
+    name: 'Standard'
+    tier: 'Standard'
+  }
   properties: {}
 }
 
@@ -150,7 +152,6 @@ resource sqlDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' =
   parent: cosmos
   properties: {
     resource: { id: 'frema' }
-    options: { throughput: 0 }
   }
 }
 
