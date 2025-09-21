@@ -30,6 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Upgrade Azure CLI
+        run: az upgrade --yes
+      - name: Show az version
+        run: az version
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
