@@ -63,13 +63,15 @@ jobs:
           set -eo pipefail
           echo "== sending template head =="; head -n 60 /tmp/iac.json || true
 
+          # create の戻りを握りつぶさず、エラー本文だけを JSON で取り出して表示
           az deployment group create \
             -g "$RG" \
             -n iac-${{ github.run_id }} \
             -f /tmp/iac.json \
             -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} \
                enableMonitoring=false deploySwa=false \
-            --only-show-errors -o none \
+            --no-prompt \
+            --query "{state:properties.provisioningState, error:properties.error}" -o jsonc \
           || EXIT=$?
 
           echo "== properties.error =="; az deployment group show -g "$RG" -n iac-${{ github.run_id }} --query properties.error -o jsonc || true
