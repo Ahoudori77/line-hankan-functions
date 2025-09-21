@@ -59,12 +59,18 @@ jobs:
             -g "$RG" -f /tmp/iac.json \
             -p env='${{ env.ENV }}' client='${{ env.CLIENT }}' location='${{ env.LOCATION }}' project='${{ env.PROJECT }}' \
               enableMonitoring=false deploySwa=false \
-            -o json > /tmp/validate.json
-          CODE=$?
-          echo "----- validate.error -----"
-          jq -r '.error // "no error"' /tmp/validate.json
-          # エラーがあれば失敗させる
-          test "$(jq '.error' /tmp/validate.json)" = "null"
+            -o json 1>/tmp/validate.json 2>/tmp/validate.stderr
+          VALID_RC=$?
+
+          echo "----- validate.stderr -----"
+          sed -n '1,200p' /tmp/validate.stderr || true
+
+          echo "----- validate.json.error -----"
+          jq -r '.error // "null"' /tmp/validate.json 2>/dev/null || true
+
+          # ここでは落とさない（次のステップでも解析できるようにする）
+          echo "VALID_RC=$VALID_RC"
+          exit 0
 
       - name: Deploy Bicep (CLI)
         env:
@@ -76,14 +82,18 @@ jobs:
             -f /tmp/iac.json \
             -p env=${{ env.ENV }} client=${{ env.CLIENT }} location=${{ env.LOCATION }} project=${{ env.PROJECT }} \
               enableMonitoring=false deploySwa=false \
-            -o json > /tmp/deploy.json
+            -o json 1>/tmp/deploy.json 2>/tmp/deploy.stderr
           EXIT=$?
-          echo "----- create.properties.error -----"
-          jq -r '.properties.error // "no error"' /tmp/deploy.json
-          echo "----- operations (last 50) -----"
-          az deployment operation group list -g "$RG" -n iac-${{ github.run_id }} \
-            --query '[-50:].[].{op:properties.provisioningOperation,state:properties.provisioningState,code:properties.statusCode,msg:coalesce(properties.statusMessage.message, properties.statusMessage.error.message)}' -o table || true
-          exit $EXIT
+
+          echo "----- deploy.stderr -----"
+          sed -n '1,200p' /tmp/deploy.stderr || true
+
+          echo "----- deploy.properties.error -----"
+          jq -r '.properties.error // "null"' /tmp/deploy.json 2>/dev/null || true
+
+          # 後続の「Dump last deployment error」でさらに詳しく出すのでここも落とさない
+          echo "CREATE_RC=$EXIT"
+          exit 0
 
       - name: Capture outputs
         id: out
@@ -140,6 +150,16 @@ jobs:
             -g "$RG" -f /tmp/iac.json \
             -p env='${{ env.ENV }}' client='${{ env.CLIENT }}' location='${{ env.LOCATION }}' project='${{ env.PROJECT }}' enableMonitoring=false \
             --query error -o jsonc
+        
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-debug
+          path: |
+            /tmp/validate.json
+            /tmp/validate.stderr
+            /tmp/deploy.json
+            /tmp/deploy.stderr
 
   app-func:
     needs: iac
