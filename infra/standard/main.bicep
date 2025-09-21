@@ -1,14 +1,4 @@
-// Standard テンプレ v1（FD/WAF は後段で追加）
-}
-}
-
-
-resource sqlDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' = {
-name: '${cosmos.name}/frema'
-properties: {
-resource: { id: 'frema' }
-options: { throughput: 0 } // Autoscale はコンテナ側で
-}
+// CLEAN v1.1 — 余計なMarkdown記号（``` など）を含めず、この内容をそのまま保存してください
 }
 
 
@@ -63,11 +53,10 @@ options: { autoscaleSettings: { maxThroughput: 2000 } }
 }
 
 
-// ---- 出力（GitHub Actions で使用） ----
+// ---- Outputs ----
 output kvName string = kv.name
 output stgName string = stg.name
 output funcName string = func.name
 output funcPrincipalId string = func.identity.principalId
 output swaName string = swa.name
 output cosmosName string = cosmos.name
-output aiConnectionString string = ai.properties.ConnectionString
