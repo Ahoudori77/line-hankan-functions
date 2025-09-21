@@ -9,13 +9,14 @@ param enableMonitoring bool = false
 
 // ---- Names ----
 var nameBase = '${project}-${client}-${env}'
+var hash     = toLower(uniqueString(resourceGroup().id, project, client, env))
 var suffix   = toLower(uniqueString(resourceGroup().id))
 
 var funcName = 'func-${nameBase}-${suffix}'
 var swaName  = 'swa-${nameBase}-${suffix}'
-var kvName   = 'kv-${nameBase}-${suffix}'
+var kvName   = 'kv${substring(hash, 0, 20)}'
 var cosmosAccountName = toLower('cos${project}${client}${env}${suffix}')
-var stgName  = toLower('st${project}${client}${env}${uniqueString(resourceGroup().id)}')
+var stgName  = 'st${substring(hash, 0, 22)}'
 
 // ---- Log Analytics / App Insights ----
 resource la 'Microsoft.OperationalInsights/workspaces@2022-10-01' = if (enableMonitoring) {
