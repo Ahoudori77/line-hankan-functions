@@ -132,8 +132,6 @@ resource swa 'Microsoft.Web/staticSites@2023-12-01' = if (deploySwa) {
   properties: {}
 }
 
-output swaName string = deploySwa ? swa.name : ''
-
 // ---- Cosmos DB (account -> db -> containers) ----
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
   name: cosmosAccountName
