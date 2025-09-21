@@ -5,6 +5,7 @@ param client string
 param location string = 'japaneast'
 param project string = 'frema'
 param swaLocation string = 'eastasia' // SWA は対応リージョンを使う
+param enableMonitoring bool = true
 
 // ---- Names ----
 var nameBase   = '${project}-${client}-${env}'
@@ -17,7 +18,7 @@ var aiName     = 'appi-${nameBase}'
 var stgName    = toLower('st${project}${client}${env}${uniqueString(resourceGroup().id)}')
 
 // ---- Log Analytics / App Insights ----
-resource la 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+resource la 'Microsoft.OperationalInsights/workspaces@2022-10-01' = if (enableMonitoring) {
   name: laName
   location: location
   properties: {
@@ -27,7 +28,7 @@ resource la 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   }
 }
 
-resource ai 'Microsoft.Insights/components@2022-06-15' = {
+resource ai 'Microsoft.Insights/components@2022-06-15' = if (enableMonitoring) {
   name: aiName
   location: location
   kind: 'web'
