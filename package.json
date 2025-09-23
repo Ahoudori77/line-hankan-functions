@@ -2,9 +2,10 @@
   "name": "line-hankan-functions",
   "version": "0.1.0",
   "private": true,
+  "main": "./dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "func start --typescript",
+    "start": "func start --script-root dist",
     "start:dist": "func start --script-root dist",
     "start:azurite": "azurite --silent --location .azurite --debug .azurite/debug.log",
     "deploy": "npm run build && func azure functionapp publish $APP_NAME"
