@@ -5,7 +5,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "func start --script-root dist",
+    "start": "func start",
     "start:dist": "func start --script-root dist",
     "start:azurite": "azurite --silent --location .azurite --debug .azurite/debug.log",
     "deploy": "npm run build && func azure functionapp publish $APP_NAME"
