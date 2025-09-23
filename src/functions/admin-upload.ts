@@ -1,12 +1,6 @@
 // admin-upload.ts
 import { app, HttpRequest } from "@azure/functions";
-import {
-  BlobServiceClient,
-  BlobSASPermissions,
-  SASProtocol,
-  StorageSharedKeyCredential,
-  generateBlobSASQueryParameters,
-} from "@azure/storage-blob";
+import { BlobServiceClient } from "@azure/storage-blob"; // ⬅ SAS系は削除
 import { TableClient } from "@azure/data-tables";
 import { Client } from "@line/bot-sdk";
 
@@ -17,8 +11,7 @@ const line = new Client({ channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TO
 
 async function ensureInit() {
   try { await table.createTable(); } catch { /* 既存ならOK */ }
-  const container = blob.getContainerClient("qrcodes");
-  await container.createIfNotExists();
+  await blob.getContainerClient("qrcodes").createIfNotExists();
 }
 
 function guessContentType(filename: string) {
@@ -28,38 +21,17 @@ function guessContentType(filename: string) {
   return "application/octet-stream";
 }
 
-/**
- * 本番ストレージ用: 短期SAS URLを生成して返す
- * ※ローカルの Azurite (UseDevelopmentStorage=true) では外部公開されないので null を返す
- */
-function buildBlobSasUrl(containerName: string, blobName: string, minutes = 15): string | null {
-  // エミュレータの場合はSASを作っても外から見えないのでスキップ
-  if (/UseDevelopmentStorage=true/i.test(storageConn)) return null;
-
-  const accountName = /AccountName=([^;]+)/i.exec(storageConn)?.[1];
-  const accountKey  = /AccountKey=([^;]+)/i.exec(storageConn)?.[1];
-  if (!accountName || !accountKey) return null;
-
-  const cred = new StorageSharedKeyCredential(accountName, accountKey);
-  const sas = generateBlobSASQueryParameters(
-    {
-      containerName,
-      blobName,
-      permissions: BlobSASPermissions.parse("r"),
-      startsOn: new Date(),
-      expiresOn: new Date(Date.now() + minutes * 60 * 1000),
-      protocol: SASProtocol.HttpsAndHttp,
-    },
-    cred
-  ).toString();
-
-  const url = blob.getContainerClient(containerName).getBlobClient(blobName).url;
-  return `${url}?${sas}`;
+// 自アプリのベースURLを取得（本番: WEBSITE_HOSTNAME / ローカル: req.url から）
+function getBaseUrl(req: HttpRequest): string {
+  const host = process.env.WEBSITE_HOSTNAME;
+  if (host) return `https://${host}`;
+  const u = new URL(req.url);
+  return `${u.protocol}//${u.host}`;
 }
 
 app.http("admin-upload", {
   methods: ["POST"],
-  authLevel: "anonymous",       // 今は手動キー検証。将来は "function" にするとより安全
+  authLevel: "anonymous",  // ←いまは手動キー検証。将来 "function" 推奨
   route: "ops/upload",
   handler: async (req: HttpRequest) => {
     // 手動APIキーチェック
@@ -70,30 +42,25 @@ app.http("admin-upload", {
 
     await ensureInit();
 
-    // 入力取り出し
+    // 入力
     let body: any;
-    try { body = await req.json(); } catch { /* noop */ }
-
+    try { body = await req.json(); } catch {}
     const orderId: string = body?.orderId;
-    const sellerUserId: string = body?.sellerUserId; // 売り子LINE userId
+    const sellerUserId: string = body?.sellerUserId;
     const filename: string = body?.filename ?? "qr.jpg";
     const contentBase64: string = body?.contentBase64;
-
     if (!orderId || !sellerUserId || !contentBase64) {
       return { status: 400, jsonBody: { error: "orderId, sellerUserId, contentBase64 は必須です" } };
     }
 
-    // Blob へ保存
+    // Blob 保存
     const container = blob.getContainerClient("qrcodes");
     const blobName = `${orderId}/${filename}`;
     const block = container.getBlockBlobClient(blobName);
-
     const buf = Buffer.from(contentBase64, "base64");
-    await block.uploadData(buf, {
-      blobHTTPHeaders: { blobContentType: guessContentType(filename) }
-    });
+    await block.uploadData(buf, { blobHTTPHeaders: { blobContentType: guessContentType(filename) } });
 
-    // 注文ステータス更新（idempotentにMerge）
+    // テーブル更新（idempotent Merge）
     await table.upsertEntity({
       partitionKey: sellerUserId,
       rowKey: orderId,
@@ -102,21 +69,28 @@ app.http("admin-upload", {
       updatedAt: new Date().toISOString(),
     }, "Merge");
 
-    // 本番は画像URLをSASで作って image push。ローカル/Azuriteは見えないのでテキスト通知。
-    const fileUrl = buildBlobSasUrl("qrcodes", blobName, 15);
-    if (process.env.NODE_ENV === "production" && fileUrl) {
+    // 常に image-proxy URL でプッシュ（SAS不要）
+    const proxyUrl = `${getBaseUrl(req)}/api/img/${sellerUserId}/${orderId}`;
+
+    let pushed = false;
+    try {
       await line.pushMessage(sellerUserId, {
         type: "image",
-        originalContentUrl: fileUrl,
-        previewImageUrl: fileUrl,
+        originalContentUrl: proxyUrl,
+        previewImageUrl: proxyUrl,
       });
-    } else {
-      await line.pushMessage(sellerUserId, {
-        type: "text",
-        text: `QR画像を登録しました（orderId: ${orderId}, file: ${filename}）。`,
-      });
+      pushed = true;
+    } catch (e: any) {
+      console.error("[admin-upload] push error", e?.statusCode, e?.originalError ?? e);
+      // フォールバックでテキストだけ送る（失敗しても握る）
+      try {
+        await line.pushMessage(sellerUserId, {
+          type: "text",
+          text: `QR画像を登録しました（orderId: ${orderId}, file: ${filename}）。`,
+        });
+      } catch {}
     }
 
-    return { jsonBody: { ok: true, blobName, fileUrl: fileUrl ?? undefined } };
+    return { jsonBody: { ok: true, blobName, proxyUrl, pushed } };
   }
 });
