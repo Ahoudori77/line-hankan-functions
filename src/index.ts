@@ -5,3 +5,6 @@ import "./functions/notify-send";
 import "./functions/admin-upload";
 import "./functions/admin-mark-shipped";
 import './functions/image-proxy';
+import "./functions/admin-products";
+import "./functions/admin-add-qr-bulk";
+import "./functions/seller-create-sale";
