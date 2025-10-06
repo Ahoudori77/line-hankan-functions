@@ -8,3 +8,4 @@ import './functions/image-proxy';
 import "./functions/admin-products";
 import "./functions/admin-add-qr-bulk";
 import "./functions/seller-create-sale";
+import "./functions/admin-broadcast";
