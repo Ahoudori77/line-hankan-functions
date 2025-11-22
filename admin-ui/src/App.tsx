@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-// --- Minimal Admin Console for line-hankan-functions ---
+// --- Admin Console for line-hankan-functions ---
 // Features (MVP):
 // 1) Health check (ping)
 // 2) Products upsert (admin-products)
 // 3) QR bulk upload (admin-add-qr-bulk)
 // 4) Broadcast send (admin-broadcast)
+// 5) Mark shipped (admin-mark-shipped) ← 追加
 //
 // Notes:
-// - For early internal use only. Keys are stored to localStorage in this MVP.
-// - For production, move keys server-side (proxy Function or APIM) and add auth.
+// - For internal use only. Keys are stored to localStorage in this MVP.
+// - For production, move keys server-side (proxy Function/APIM) and add auth.
 // - Add your site origin to Azure Functions CORS allowlist.
 
 // ---------- Helpers ----------
@@ -18,6 +19,7 @@ const LS = {
   PKEY: "lhf.pkey", // admin-products function key
   QKEY: "lhf.qkey", // admin-add-qr-bulk function key
   BKEY: "lhf.bkey", // admin-broadcast function key
+  MKEY: "lhf.mkey", // admin-mark-shipped function key
   DEFAULTS: "lhf.defaults",
 };
 
@@ -60,6 +62,7 @@ export default function AdminConsole() {
   const [pkey, setPkey] = useState<string>(localStorage.getItem(LS.PKEY) || "");
   const [qkey, setQkey] = useState<string>(localStorage.getItem(LS.QKEY) || "");
   const [bkey, setBkey] = useState<string>(localStorage.getItem(LS.BKEY) || "");
+  const [mkey, setMkey] = useState<string>(localStorage.getItem(LS.MKEY) || "");
 
   const [ping, setPing] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
@@ -81,18 +84,17 @@ export default function AdminConsole() {
   const [bcText, setBcText] = useState("テスト通知");
   const [bcIds, setBcIds] = useState(""); // comma separated LINE userIds
 
-  useEffect(() => {
-    localStorage.setItem(LS.APP, app);
-  }, [app]);
-  useEffect(() => {
-    localStorage.setItem(LS.PKEY, pkey);
-  }, [pkey]);
-  useEffect(() => {
-    localStorage.setItem(LS.QKEY, qkey);
-  }, [qkey]);
-  useEffect(() => {
-    localStorage.setItem(LS.BKEY, bkey);
-  }, [bkey]);
+  // Mark shipped (by saleId OR (orderId + sellerUserId))
+  const [shipSaleId, setShipSaleId] = useState("");
+  const [shipOrderId, setShipOrderId] = useState("");
+  const [shipSellerUserId, setShipSellerUserId] = useState("");
+
+  // persist config
+  useEffect(() => { localStorage.setItem(LS.APP, app); }, [app]);
+  useEffect(() => { localStorage.setItem(LS.PKEY, pkey); }, [pkey]);
+  useEffect(() => { localStorage.setItem(LS.QKEY, qkey); }, [qkey]);
+  useEffect(() => { localStorage.setItem(LS.BKEY, bkey); }, [bkey]);
+  useEffect(() => { localStorage.setItem(LS.MKEY, mkey); }, [mkey]);
 
   const okApp = useMemo(() => /^https?:\/\//.test(app), [app]);
 
@@ -123,7 +125,7 @@ export default function AdminConsole() {
     } finally { setBusy(false); }
   }
 
-  async function onQrFilesChange(files: FileList | null) {
+  function onQrFilesChange(files: FileList | null) {
     setQrProgress("");
     setQrFiles(files ? Array.from(files) : []);
   }
@@ -162,11 +164,39 @@ export default function AdminConsole() {
       const ids = bcIds.split(",").map(s => s.trim()).filter(Boolean);
       const url = `${app.replace(/\/$/, "")}/api/ops/broadcast?code=${encodeURIComponent(bkey)}`;
       const body: any = { text: bcText };
-      if (ids.length) body.toIds = ids; // 未指定なら ADMIN_BROADCAST_TO 側に飛ぶ実装想定
+      if (ids.length) body.toIds = ids; // 未指定なら ADMIN_BROADCAST_TO 側に飛ぶ実装
       const res = await jpost<any>(url, body);
       setMsg(`broadcast OK: ${JSON.stringify(res)}`);
     } catch (e: any) {
       setMsg(`broadcast ERR: ${e.message}`);
+    } finally { setBusy(false); }
+  }
+
+  async function onMarkShipped(e: React.FormEvent) {
+    e.preventDefault();
+    if (!okApp) return setMsg("APP URL が不正です");
+    if (!mkey) return setMsg("MKEY（admin-mark-shipped の Function Key）を入力してください");
+
+    const hasSale = shipSaleId.trim().length > 0;
+    const hasPair = shipOrderId.trim().length > 0 && shipSellerUserId.trim().length > 0;
+    if (!hasSale && !hasPair) return setMsg("saleId または (orderId + sellerUserId) を入力してください");
+
+    setBusy(true); setMsg("");
+    try {
+      const url = `${app.replace(/\/$/, "")}/api/ops/mark-shipped?code=${encodeURIComponent(mkey)}`;
+      const body: any = {};
+      if (hasSale) body.saleId = shipSaleId.trim();
+      if (hasPair) {
+        body.orderId = shipOrderId.trim();
+        body.sellerUserId = shipSellerUserId.trim();
+      }
+      const res = await jpost<any>(url, body);
+      setMsg(`mark-shipped OK: ${JSON.stringify(res)}`);
+      setShipSaleId("");
+      setShipOrderId("");
+      setShipSellerUserId("");
+    } catch (e: any) {
+      setMsg(`mark-shipped ERR: ${e.message}`);
     } finally { setBusy(false); }
   }
 
@@ -175,19 +205,14 @@ export default function AdminConsole() {
       <div className="max-w-5xl mx-auto space-y-6">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">line-hankan Admin Console (MVP)</h1>
-          <button
-            onClick={doPing}
-            className="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm hover:opacity-90"
-          >ping</button>
+          <button onClick={doPing} className="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm hover:opacity-90">ping</button>
         </header>
 
         <section className="grid md:grid-cols-2 gap-6">
           <Card title="Config">
             <div className="space-y-3">
               <Labeled label="APP (Function App URL)">
-                <input value={app} onChange={e=>setApp(e.target.value)}
-                       placeholder="https://func-xxx.azurewebsites.net"
-                       className="input" />
+                <input value={app} onChange={e=>setApp(e.target.value)} placeholder="https://func-xxx.azurewebsites.net" className="input" />
               </Labeled>
               <Labeled label="PKEY (admin-products)">
                 <input value={pkey} onChange={e=>setPkey(e.target.value)} className="input" />
@@ -197,6 +222,9 @@ export default function AdminConsole() {
               </Labeled>
               <Labeled label="BKEY (admin-broadcast)">
                 <input value={bkey} onChange={e=>setBkey(e.target.value)} className="input" />
+              </Labeled>
+              <Labeled label="MKEY (admin-mark-shipped)">
+                <input value={mkey} onChange={e=>setMkey(e.target.value)} className="input" />
               </Labeled>
               <p className="text-sm text-slate-500">※ 当面はローカル保存。運用ではサーバー側に移し、認証を導入してください。</p>
               <div className="text-sm text-slate-600">ping: <code>{ping}</code></div>
@@ -260,9 +288,33 @@ export default function AdminConsole() {
           </Card>
         </section>
 
+        <section className="grid md:grid-cols-2 gap-6">
+          <Card title="Mark shipped">
+            <form onSubmit={onMarkShipped} className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Labeled label="saleId（任意：あればこれだけでOK）">
+                  <input className="input" value={shipSaleId} onChange={e=>setShipSaleId(e.target.value)} placeholder="例: 1759324282012-a5ht" />
+                </Labeled>
+                <div className="text-sm text-slate-500 md:flex md:items-end">※ saleId が未入力の場合は、下の2つを指定</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Labeled label="orderId">
+                  <input className="input" value={shipOrderId} onChange={e=>setShipOrderId(e.target.value)} placeholder="例: O123" />
+                </Labeled>
+                <Labeled label="sellerUserId (LINE userId)">
+                  <input className="input" value={shipSellerUserId} onChange={e=>setShipSellerUserId(e.target.value)} placeholder="例: Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+                </Labeled>
+              </div>
+              <button disabled={busy} className="btn-primary w-full">Mark as shipped</button>
+              <div className="text-xs text-slate-500">※ エンドポイント: /api/ops/mark-shipped?code=&lt;MKEY&gt;</div>
+            </form>
+          </Card>
+        </section>
+
         {msg && (
-          <div className={cls("p-3 rounded-xl border", msg.includes("ERR") ? "border-rose-300 bg-rose-50" : "border-emerald-300 bg-emerald-50")}
-          >{msg}</div>
+          <div className={cls("p-3 rounded-xl border", msg.includes("ERR") ? "border-rose-300 bg-rose-50" : "border-emerald-300 bg-emerald-50")}>
+            {msg}
+          </div>
         )}
 
         <footer className="text-xs text-slate-500 pt-6">
